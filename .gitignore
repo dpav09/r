@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+.env
+models/*
+!models/.gitkeep
+data/qdrant/*
+!data/qdrant/.gitkeep
+data/contracts/*
+!data/contracts/.gitkeep

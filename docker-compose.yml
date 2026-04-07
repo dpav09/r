@@ -1,0 +1,132 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: contracts-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+
+  embedder:
+    build: ./services/embedder
+    container_name: contracts-embedder
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MODEL_NAME: ai-forever/FRIDA
+      TORCH_DEVICE: cuda
+      MODEL_DTYPE: float16
+      BATCH_SIZE: ${EMBEDDER_BATCH_SIZE}
+      HF_HOME: /models
+      TRANSFORMERS_CACHE: /models
+      CUDA_VISIBLE_DEVICES: "0"
+      NVIDIA_VISIBLE_DEVICES: "0"
+      TOKENIZERS_PARALLELISM: "false"
+    shm_size: "8gb"
+    volumes:
+      - ./models:/models
+    ports:
+      - "8001:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  reranker:
+    build: ./services/reranker
+    container_name: contracts-reranker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MODEL_NAME: BAAI/bge-reranker-v2-m3
+      USE_FP16: "true"
+      RERANKER_MAX_LENGTH: ${RERANKER_MAX_LENGTH}
+      HF_HOME: /models
+      TRANSFORMERS_CACHE: /models
+      CUDA_VISIBLE_DEVICES: "0"
+      NVIDIA_VISIBLE_DEVICES: "0"
+      TOKENIZERS_PARALLELISM: "false"
+    shm_size: "8gb"
+    volumes:
+      - ./models:/models
+    ports:
+      - "8002:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  llm:
+    image: vllm/vllm-openai:latest
+    container_name: contracts-llm
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+      CUDA_VISIBLE_DEVICES: "0"
+      NVIDIA_VISIBLE_DEVICES: "0"
+      VLLM_ENABLE_CUDA_COMPATIBILITY: "1"
+    volumes:
+      - ./models:/root/.cache/huggingface
+    ports:
+      - "8003:8000"
+    ipc: host
+    shm_size: "16gb"
+    command:
+      - --model
+      - ${LLM_MODEL}
+      - --dtype
+      - half
+      - --api-key
+      - ${LLM_API_KEY}
+      - --generation-config
+      - vllm
+      - --gpu-memory-utilization
+      - "0.55"
+      - --max-model-len
+      - "16384"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  api:
+    build: ./services/api
+    container_name: contracts-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      QDRANT_URL: ${QDRANT_URL}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION}
+      EMBEDDER_URL: ${EMBEDDER_URL}
+      RERANKER_URL: ${RERANKER_URL}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_MODEL: ${LLM_MODEL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS}
+      LLM_CONTEXT_CHUNKS: ${LLM_CONTEXT_CHUNKS}
+      PREFETCH_LIMIT: ${PREFETCH_LIMIT}
+      FUSED_LIMIT: ${FUSED_LIMIT}
+      INDEX_BATCH_SIZE: ${INDEX_BATCH_SIZE}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT}
+    depends_on:
+      - qdrant
+      - embedder
+      - reranker
+      - llm
+    volumes:
+      - ./data/contracts:/data/contracts
+    ports:
+      - "8000:8000"
